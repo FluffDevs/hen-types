@@ -10,6 +10,7 @@ import z from "zod";
 
 export const Music = z.object({
 	id: z.string(),
+	page: z.string().optional(),
 	title: z.string(),
 	artist: z.string(),
 	album: z.string().optional(),
