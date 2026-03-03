@@ -2,7 +2,6 @@ import z from "zod";
 
 export const PlaylistEditable = z.object({
 	name: z.string(),
-	author: z.string(),
 	musics: z.array(z.string()).default([]),
 });
 export type PlaylistEditable = z.infer<typeof PlaylistEditable>;
