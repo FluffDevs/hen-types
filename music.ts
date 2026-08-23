@@ -1,5 +1,15 @@
 import z from "zod";
 
+// Stored to S3 tags, maximum 10 pers objects, max 256 bytes per value, UTF-16 stored
+export const MusicTags = z.object({
+	hint: z.string().meta({
+		description: "Represent title and artist for human control in S3",
+	}),
+	page: z.string().optional(),
+});
+export type MusicTags = z.infer<typeof MusicTags>;
+
+// Stored to S3 Annotation, support up to 1 Mo, stored as UTF-8 JSON encoded
 export const MusicMetadata = z.object({
 	title: z.string(),
 	artist: z.string(),
@@ -7,12 +17,17 @@ export const MusicMetadata = z.object({
 	genre: z.string().optional(),
 	duration: z.iso.duration().optional(),
 	year: z.coerce.number().optional(),
+	explicit: z.boolean().default(false),
+	lang: z.string().optional(),
+	furry: z.boolean().default(false),
+	cue_entry: z.coerce.number().optional(),
+	cue_exit: z.coerce.number().optional(),
 });
 export type MusicMetadata = z.infer<typeof MusicMetadata>;
 
 export const Music = MusicMetadata.extend({
 	id: z.string(),
-	page: z.string().optional(),
+	page: MusicTags.shape.page,
 });
 export type Music = z.infer<typeof Music>;
 
