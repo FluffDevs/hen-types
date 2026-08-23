@@ -35,6 +35,7 @@ export const MUSIC_GENRES = [
 	"World",
 	"Ambient / Chillout",
 	"Bande originale / Comedie musicale",
+	"Mix",
 	"Autre",
 ] as const;
 
