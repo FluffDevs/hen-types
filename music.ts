@@ -29,8 +29,7 @@ export type MusicMetadata = z.infer<typeof MusicMetadata>;
 
 export const Music = MusicMetadata.extend({
 	id: z.string(),
-	page: MusicTags.shape.page,
-});
+}).extend(MusicTags.omit({ hint: true }).shape);
 export type Music = z.infer<typeof Music>;
 
 export const MusicsList = z.object({
