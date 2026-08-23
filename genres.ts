@@ -9,6 +9,7 @@
 export const MUSIC_GENRES = [
 	"Pop",
 	"Rock",
+	"Alternative",
 	"Rap / Hip-Hop",
 	"RnB / Soul",
 	"Electro / EDM",
