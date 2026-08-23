@@ -6,6 +6,7 @@ export const MusicTags = z.object({
 		description: "Represent title and artist for human control in S3",
 	}),
 	page: z.string().optional(),
+	validated_admin: z.boolean().default(false),
 });
 export type MusicTags = z.infer<typeof MusicTags>;
 
@@ -20,8 +21,9 @@ export const MusicMetadata = z.object({
 	explicit: z.boolean().default(false),
 	lang: z.string().optional(),
 	furry: z.boolean().default(false),
-	cue_entry: z.coerce.number().optional(),
-	cue_exit: z.coerce.number().optional(),
+	cue_in: z.coerce.number().optional(),
+	cue_out: z.coerce.number().optional(),
+	sacem_registry: z.string().optional(),
 });
 export type MusicMetadata = z.infer<typeof MusicMetadata>;
 
