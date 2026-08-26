@@ -1,5 +1,8 @@
 import z from "zod";
 
+export const MediaCategory = z.enum(["musics", "jingles", "podcasts", "ads"]);
+export type MediaCategory = z.infer<typeof MediaCategory>;
+
 // Stored to S3 tags, maximum 10 pers objects, max 256 bytes per value, UTF-16 stored
 export const MusicTags = z.object({
 	hint: z.string().meta({
@@ -46,20 +49,23 @@ export async function listMusics(
 	token: string,
 	page: number = 0,
 ): Promise<MusicsList> {
-	const res = await fetch(`${process.env.API_BASE_URL}/musics?page=${page}`, {
-		mode: "cors",
-		credentials: "include",
-		cache: "no-cache",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${token}`,
+	const res = await fetch(
+		`${process.env.API_BASE_URL}/media/musics?page=${page}`,
+		{
+			mode: "cors",
+			credentials: "include",
+			cache: "no-cache",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${token}`,
+			},
 		},
-	});
+	);
 	return MusicsList.parse(await res.json());
 }
 
 export async function getMusicData(token: string, id: string): Promise<Music> {
-	const res = await fetch(`${process.env.API_BASE_URL}/musics/${id}`, {
+	const res = await fetch(`${process.env.API_BASE_URL}/media/musics/${id}`, {
 		mode: "cors",
 		credentials: "include",
 		cache: "no-cache",
@@ -72,14 +78,17 @@ export async function getMusicData(token: string, id: string): Promise<Music> {
 }
 
 export async function downloadMusic(token: string, id: string): Promise<Blob> {
-	const res = await fetch(`${process.env.API_BASE_URL}/musics/${id}/download`, {
-		mode: "cors",
-		credentials: "include",
-		cache: "no-cache",
-		headers: {
-			Authorization: `Bearer ${token}`,
+	const res = await fetch(
+		`${process.env.API_BASE_URL}/media/musics/${id}/download`,
+		{
+			mode: "cors",
+			credentials: "include",
+			cache: "no-cache",
+			headers: {
+				Authorization: `Bearer ${token}`,
+			},
 		},
-	});
+	);
 	if (!res.ok) {
 		throw new Error(`Failed to download music with id ${id}`);
 	}
@@ -87,7 +96,7 @@ export async function downloadMusic(token: string, id: string): Promise<Blob> {
 }
 
 export async function deleteMusic(token: string, id: string): Promise<void> {
-	const res = await fetch(`${process.env.API_BASE_URL}/musics/${id}`, {
+	const res = await fetch(`${process.env.API_BASE_URL}/media/musics/${id}`, {
 		method: "DELETE",
 		mode: "cors",
 		credentials: "include",
@@ -106,7 +115,7 @@ export async function patchMusic(
 	id: string,
 	data: Partial<MusicMetadata>,
 ): Promise<Music> {
-	const res = await fetch(`${process.env.API_BASE_URL}/musics/${id}`, {
+	const res = await fetch(`${process.env.API_BASE_URL}/media/musics/${id}`, {
 		method: "PATCH",
 		mode: "cors",
 		credentials: "include",
