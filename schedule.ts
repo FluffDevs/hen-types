@@ -1,118 +1,97 @@
-import z from "zod";
+import { z } from "zod";
+import { MediaCategory } from "./music";
 
-export const MediaKind = z.enum(["audio", "video"]);
-export type MediaKind = z.infer<typeof MediaKind>;
+export const DayOccurence = z.templateLiteral([
+	z.enum([
+		"MONDAY",
+		"TUESDAY",
+		"WEDNESDAY",
+		"THURSDAY",
+		"FRIDAY",
+		"SATURDAY",
+		"SUNDAY",
+	]),
+	":",
+	z.iso.time({ precision: 0 }),
+]);
+export type DayOccurence = z.infer<typeof DayOccurence>;
 
-export const Media = z.object({
-	bucket: z.string(),
-	key: z.string(),
-	kind: MediaKind,
-	contentType: z.string().optional(),
-	durationSec: z.number().optional(),
-});
-export type Media = z.infer<typeof Media>;
-
-const WeeklyPeriodCommon = {
-	id: z.string(),
+export const ScheduleEvent = z.object({
+	timing: z.union([
+		z.object({
+			first_occurence: z.iso.datetime(),
+			last_occurence: z.iso.datetime().optional(),
+			repeat_every_weeks: z.number().min(1),
+			days: DayOccurence.array().min(1),
+		}),
+		z.object({
+			date: z.iso.datetime(),
+		}),
+	]),
+	event_id: z.string(),
 	enabled: z.boolean().default(true),
-	/** ISO 8601 : 1 = lundi ... 7 = dimanche. */
-	dayOfWeek: z.number().int().min(1).max(7),
-	/** Heure locale "HH:mm" (voir ScheduleDocument.timezone). */
-	startTime: z.string(),
-	endTime: z.string(),
 	title: z.string(),
 	description: z.string().default(""),
-	createdBy: z.string(),
-	createdAt: z.iso.datetime(),
-	updatedAt: z.iso.datetime(),
-};
-
-export const MusiquePeriod = z.object({
-	type: z.literal("musique"),
-	...WeeklyPeriodCommon,
-	playlistId: z.string(),
-	/** Nom de la playlist dénormalisé, pour affichage sans lookup supplémentaire. */
-	playlistName: z.string(),
+	duration: z.iso.duration(),
+	priority: z.number().min(0).max(100),
+	content: z.discriminatedUnion("kind", [
+		z.object({
+			kind: z.literal("live"),
+			animator_id: z.string(),
+			animator_label: z.string(),
+		}),
+		z.object({
+			kind: z.literal("playlist"),
+			playlist_id: z.string().min(1),
+			random: z.boolean(),
+			max_loop: z.number().min(1).optional(),
+		}),
+		z.object({
+			kind: z.literal("media"),
+			medias: z
+				.object({
+					category: MediaCategory,
+					media_id: z.string().min(1),
+				})
+				.array()
+				.min(1),
+			random: z.boolean(),
+			max_loop: z.number().min(1).optional(),
+		}),
+	]),
+	created_by: z.string(),
+	created_at: z.iso.datetime(),
+	updated_by: z.string(),
+	updated_at: z.iso.datetime(),
 });
-export type MusiquePeriod = z.infer<typeof MusiquePeriod>;
+export type ScheduleEvent = z.infer<typeof ScheduleEvent>;
 
-export const EmissionRecurrentePeriod = z.object({
-	type: z.literal("emission_recurrente"),
-	...WeeklyPeriodCommon,
-	hostUserId: z.string(),
-	hostDisplayName: z.string(),
-	/** true = direct (RTMP/SRT via /live/start côté awoo-queen), false = lecture de `media`. */
-	live: z.boolean(),
-	media: Media.nullable().optional(),
+export const FullSchedule = z.object({
+	events: ScheduleEvent.array(),
+	default_playlist_id: z.string().optional(),
 });
-export type EmissionRecurrentePeriod = z.infer<typeof EmissionRecurrentePeriod>;
+export type FullSchedule = z.infer<typeof FullSchedule>;
 
-export const WeeklyPeriod = z.discriminatedUnion("type", [MusiquePeriod, EmissionRecurrentePeriod]);
-export type WeeklyPeriod = z.infer<typeof WeeklyPeriod>;
-
-export const OneOffEvent = z.object({
-	id: z.string(),
-	type: z.literal("emission_ponctuelle"),
-	enabled: z.boolean().default(true),
-	/** Date ISO absolue (pas rattachée à la grille Semaine A/B). */
-	date: z.iso.date(),
-	startTime: z.string(),
-	endTime: z.string(),
-	title: z.string(),
-	description: z.string().default(""),
-	hostUserId: z.string(),
-	hostDisplayName: z.string(),
-	live: z.boolean(),
-	media: Media.nullable().optional(),
-	createdBy: z.string(),
-	createdAt: z.iso.datetime(),
-	updatedAt: z.iso.datetime(),
+export const ScheduleWithMetadata = FullSchedule.extend({
+	version: z.string(),
+	updated_by: z.string(),
+	updated_at: z.iso.datetime(),
 });
-export type OneOffEvent = z.infer<typeof OneOffEvent>;
+export type ScheduleWithMetadata = z.infer<typeof ScheduleWithMetadata>;
 
-export const Weeks = z.object({
-	A: z.array(WeeklyPeriod).default([]),
-	B: z.array(WeeklyPeriod).default([]),
-});
-export type Weeks = z.infer<typeof Weeks>;
-
-/**
- * Document unique décrivant toute la programmation de la radio (planning bi-hebdomadaire
- * Semaine A / Semaine B + émissions ponctuelles). Stocké tel quel en JSON sur S3 par awoo-queen,
- * remplacé en entier à chaque écriture (verrou optimiste via `version`).
- */
-export const ScheduleDocument = z.object({
-	version: z.number().int(),
-	/** Fuseau horaire dans lequel TOUTES les heures de ce document doivent être interprétées. */
-	timezone: z.string(),
-	/** Date ISO (un lundi) marquant le début connu d'un cycle "Semaine A". */
-	weekAnchor: z.iso.date(),
-	updatedAt: z.iso.datetime(),
-	updatedBy: z.string().default(""),
-	/** Playlist diffusée quand aucun créneau ne correspond à l'instant présent. */
-	defaultPlaylistId: z.string().nullable().optional(),
-	weeks: Weeks,
-	oneOffs: z.array(OneOffEvent).default([]),
-});
-export type ScheduleDocument = z.infer<typeof ScheduleDocument>;
-
-export const MediaListItem = z.object({
-	key: z.string(),
-	size: z.number(),
-	lastModified: z.string().optional(),
-});
-export type MediaListItem = z.infer<typeof MediaListItem>;
-
-export async function getSchedule(): Promise<ScheduleDocument> {
+export async function getSchedule(): Promise<ScheduleWithMetadata> {
 	const res = await fetch("/api/programmations", { cache: "no-store" });
 	if (!res.ok) {
 		const payload = await res.json().catch(() => ({}));
 		throw new Error(payload?.error ?? `Erreur ${res.status}`);
 	}
-	return ScheduleDocument.parse(await res.json());
+	return ScheduleWithMetadata.parse(await res.json());
 }
 
-export async function putSchedule(token: string, doc: ScheduleDocument): Promise<ScheduleDocument> {
+export async function putSchedule(
+	token: string,
+	doc: FullSchedule,
+): Promise<ScheduleWithMetadata> {
 	const res = await fetch("/api/programmations", {
 		method: "PUT",
 		headers: {
@@ -125,5 +104,5 @@ export async function putSchedule(token: string, doc: ScheduleDocument): Promise
 	if (!res.ok) {
 		throw new Error(payload?.error ?? `Erreur ${res.status}`);
 	}
-	return ScheduleDocument.parse(payload);
+	return ScheduleWithMetadata.parse(payload);
 }
