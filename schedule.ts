@@ -31,7 +31,7 @@ export function parseDayOccurence(occ: DayOccurence): {
 	time: string;
 } {
 	const idx = occ.split(":");
-	const day = Weekday.parse(idx.pop());
+	const day = Weekday.parse(idx.shift());
 	const time = z.iso.time({ precision: 0 }).parse(idx.join(":"));
 	return {
 		day,
