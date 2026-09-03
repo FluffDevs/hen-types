@@ -40,29 +40,72 @@ export function parseDayOccurence(occ: DayOccurence): {
 	};
 }
 
+const PlaylistContent = z.object({
+	kind: z.literal("playlist"),
+	playlist_id: z.string().min(1),
+	random: z.boolean().default(false),
+	max_loop: z.number().int().min(1).optional(),
+});
+
+const MediaContent = z.object({
+	kind: z.literal("media"),
+	medias: z
+		.object({
+			category: MediaCategory,
+			media_id: z.string().min(1),
+		})
+		.array()
+		.min(1),
+	random: z.boolean().default(false),
+	max_loop: z.number().int().min(1).optional(),
+});
+
+/**
+ * Une source d'un creneau "alternate". C'est une playlist ou une liste de medias,
+ * plus `take`.
+ *
+ * Volontairement NON recursif : une alternance ne peut pas contenir une autre
+ * alternance, et on ne prend pas une piste dans un direct. Garder le type plat
+ * evite au modele, a l'editeur et au serveur de diffusion d'avoir a repondre a des
+ * questions genantes sur l'imbrication.
+ */
+export const AlternateSource = z.discriminatedUnion("kind", [
+	PlaylistContent.extend({
+		/** Nombre d'elements joues d'affilee avant de passer a la source suivante. */
+		take: z.number().int().min(1).default(1),
+	}),
+	MediaContent.extend({
+		take: z.number().int().min(1).default(1),
+	}),
+]);
+export type AlternateSource = z.infer<typeof AlternateSource>;
+
 export const ScheduleContent = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("live"),
 		animator_id: z.string(),
 		animator_label: z.string(),
 	}),
+	PlaylistContent,
+	MediaContent,
+	/**
+	 * Joue un tour de chaque source, en boucle : une musique, un jingle, une
+	 * musique, un jingle.
+	 *
+	 * Chaque source garde sa propre position et son propre budget de boucles, donc
+	 * l'epuisement de l'une n'arrete pas les autres : elle sort simplement de la
+	 * rotation. Quand toutes sont epuisees, le creneau rend l'antenne a la priorite
+	 * inferieure.
+	 *
+	 * `duration` reste la fenetre du creneau. Une alternance ne compte comme du
+	 * travail fini (et donc rattrapable si elle demarre en retard) que si TOUTES
+	 * ses sources ont un `max_loop` : une seule source sans limite et la rotation
+	 * ne s'arrete jamais.
+	 */
 	z.object({
-		kind: z.literal("playlist"),
-		playlist_id: z.string().min(1),
-		random: z.boolean().default(false),
-		max_loop: z.number().int().min(1).optional(),
-	}),
-	z.object({
-		kind: z.literal("media"),
-		medias: z
-			.object({
-				category: MediaCategory,
-				media_id: z.string().min(1),
-			})
-			.array()
-			.min(1),
-		random: z.boolean().default(false),
-		max_loop: z.number().int().min(1).optional(),
+		kind: z.literal("alternate"),
+		/** Au moins deux : alterner entre une seule source n'a pas de sens. */
+		sources: AlternateSource.array().min(2),
 	}),
 ]);
 export type ScheduleContent = z.infer<typeof ScheduleContent>;
@@ -74,6 +117,7 @@ export type ScheduleContent = z.infer<typeof ScheduleContent>;
  */
 export const SlotType = z.enum([
 	"playlist",
+	"playlist_alternee",
 	"emission_live",
 	"emission_rec",
 	"habillage",
@@ -85,7 +129,7 @@ export const SLOT_TYPES: Record<
 	SlotType,
 	{
 		label: string;
-		content_kind: "playlist" | "live" | "media";
+		content_kind: "playlist" | "live" | "media" | "alternate";
 		/** Genre de la mediatheque a pre-filtrer (types "media" uniquement). */
 		category?: MediaCategory;
 		default_priority: number;
@@ -94,6 +138,12 @@ export const SLOT_TYPES: Record<
 	playlist: {
 		label: "Playlist",
 		content_kind: "playlist",
+		category: "musics",
+		default_priority: 1,
+	},
+	playlist_alternee: {
+		label: "Playlist alternée",
+		content_kind: "alternate",
 		category: "musics",
 		default_priority: 1,
 	},
