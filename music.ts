@@ -1,6 +1,6 @@
 import z from "zod";
 
-export const MediaCategory = z.enum(["musics", "jingles", "podcasts", "ads"]);
+export const MediaCategory = z.enum(["musics", "jingles", "podcasts", "ads", "others"]);
 export type MediaCategory = z.infer<typeof MediaCategory>;
 
 // Stored to S3 tags, maximum 10 pers objects, max 256 bytes per value, UTF-16 stored
