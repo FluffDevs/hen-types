@@ -122,6 +122,7 @@ export const SlotType = z.enum([
 	"emission_rec",
 	"habillage",
 	"promo",
+	"vod",
 ]);
 export type SlotType = z.infer<typeof SlotType>;
 
@@ -169,6 +170,12 @@ export const SLOT_TYPES: Record<
 		content_kind: "media",
 		category: "ads",
 		default_priority: 75,
+	},
+	vod: {
+		label: "VOD / Rediffusion",
+		content_kind: "media",
+		category: "vod",
+		default_priority: 50,
 	},
 };
 
