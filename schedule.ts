@@ -243,8 +243,8 @@ export type ResolvedSlot = z.infer<typeof ResolvedSlot>;
 
 // --- Helpers client (front) -------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: reponse JSON libre, validee ensuite par zod
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+// biome-ignore lint/suspicious/noExplicitAny: reponse JSON libre, validee ensuite par zod
 type Json = any;
 
 async function safeJson(res: Response): Promise<Json> {

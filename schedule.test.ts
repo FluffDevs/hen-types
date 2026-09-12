@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { MediaCategory } from "./music";
-import { AlternateSource, ScheduleContent, SLOT_TYPES, SlotType } from "./schedule";
+import {
+	AlternateSource,
+	ScheduleContent,
+	SLOT_TYPES,
+	SlotType,
+} from "./schedule";
 
 describe("contenu alternate", () => {
 	const playlistSource = {
