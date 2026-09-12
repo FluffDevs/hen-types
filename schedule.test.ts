@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AlternateSource, ScheduleContent } from "./schedule";
+import { MediaCategory } from "./music";
+import { AlternateSource, ScheduleContent, SLOT_TYPES, SlotType } from "./schedule";
 
 describe("contenu alternate", () => {
 	const playlistSource = {
@@ -88,5 +89,30 @@ describe("contenu alternate", () => {
 
 		expect(parsed.kind).toBe("playlist");
 		expect("take" in parsed).toBe(false);
+	});
+});
+
+describe("categorie VOD / Rediffusion", () => {
+	it("existe dans MediaCategory", () => {
+		expect(MediaCategory.options).toContain("vod");
+	});
+
+	it("a un slot_type dedie qui pre-filtre sur la categorie vod", () => {
+		expect(SlotType.options).toContain("vod");
+		expect(SLOT_TYPES.vod).toEqual({
+			label: "VOD / Rediffusion",
+			content_kind: "media",
+			category: "vod",
+			default_priority: 50,
+		});
+	});
+
+	it("accepte un creneau media avec des pistes de la categorie vod", () => {
+		const parsed = ScheduleContent.parse({
+			kind: "media",
+			medias: [{ category: "vod", media_id: "v1" }],
+			random: false,
+		});
+		expect(parsed.kind).toBe("media");
 	});
 });
