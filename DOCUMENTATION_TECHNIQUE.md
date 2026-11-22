@@ -182,7 +182,7 @@ Cette table est verrouillée par un test dédié (voir §9).
 
 ### `ScheduleEvent`
 
-> **Toutes les dates/heures du document sont interprétées en UTC** par le serveur ; c'est au front/client de convertir vers/depuis UTC.
+> **Fuseau du planning.** Les heures de `days` (événements récurrents) sont des heures « murales » dans le fuseau du planning (`FullSchedule.timezone`, `Europe/Paris` par défaut) : `"SUNDAY:18:00:00"` joue à 18:00 à Paris toute l'année, heure d'été comprise. `date` (ponctuel), `first_occurence` et `last_occurence` restent des **instants UTC**. Heure sautée au passage à l'heure d'été (02:30) → décalée d'autant (03:30) ; heure doublée au passage à l'heure d'hiver → la première. `expandEventOccurrences` est l'implémentation de référence, utilisée par le backend et le front ; awoo-queen applique les mêmes règles en Rust.
 
 - `timing` : union de deux formes —
   - récurrent : `{first_occurence, last_occurence?, repeat_every_weeks: number.int().min(1), days: DayOccurence[].min(1)}` ;
@@ -191,7 +191,7 @@ Cette table est verrouillée par un test dédié (voir §9).
 
 ### `FullSchedule` / `ScheduleWithMetadata`
 
-- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?}` — le document éditable (ce qu'on envoie en `PUT`).
+- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?, timezone}` — le document éditable (ce qu'on envoie en `PUT`). `timezone` est un fuseau IANA validé, `Europe/Paris` par défaut (les anciens documents sans ce champ sont donc lus en heure de Paris, qui est l'heure dans laquelle ils ont été saisis).
 - `ScheduleWithMetadata = FullSchedule.extend({version, updated_by, updated_at})` — ajoute le verrouillage optimiste et les champs d'audit ; c'est ce que renvoie `GET`.
 
 ### `ResolvedSlot`
