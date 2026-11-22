@@ -180,8 +180,36 @@ export const SLOT_TYPES: Record<
 };
 
 /**
- * The server will interpret ALL dates and time, for the whole Schedule, as UTC
- * The frontend / client is responsible to convert them to/from UTC on their side
+ * Fuseau de reference d'un planning qui n'en declare pas : celui dans lequel les
+ * heures de `days` ont toujours ete saisies dans l'editeur.
+ */
+export const DEFAULT_SCHEDULE_TIMEZONE = "Europe/Paris";
+
+/** Vrai si `tz` est un fuseau IANA connu du runtime (`Europe/Paris`, `UTC`...). */
+export function isValidTimeZone(tz: string): boolean {
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: tz });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export const ScheduleTimezone = z
+	.string()
+	.min(1)
+	.refine(isValidTimeZone, { message: "Fuseau horaire IANA inconnu" });
+
+/**
+ * Heures et dates d'un evenement :
+ * - recurrent : les heures de `days` sont des heures « murales » dans le fuseau
+ *   du planning (`FullSchedule.timezone`). `"SUNDAY:18:00:00"` joue a 18:00 a
+ *   Paris toute l'annee, heure d'ete comprise. `first_occurence` /
+ *   `last_occurence` sont des instants UTC qui bornent les occurrences ; la date
+ *   UTC de `first_occurence` fixe aussi la semaine d'ancrage du cycle.
+ * - ponctuel : `date` est un instant UTC (avec `Z`).
+ * `duration` est une duree reelle : un creneau de 2 h a cheval sur un changement
+ * d'heure dure 2 h, meme si l'heure murale de fin parait decalee.
  */
 export const ScheduleEvent = z.object({
 	timing: z.union([
@@ -213,8 +241,191 @@ export type ScheduleEvent = z.infer<typeof ScheduleEvent>;
 export const FullSchedule = z.object({
 	events: ScheduleEvent.array(),
 	default_playlist_id: z.string().optional(),
+	/**
+	 * Fuseau IANA dans lequel sont exprimees les heures des evenements
+	 * recurrents. Absent des anciens documents : vaut alors
+	 * `DEFAULT_SCHEDULE_TIMEZONE`, qui est le fuseau dans lequel elles ont ete
+	 * saisies.
+	 */
+	timezone: ScheduleTimezone.default(DEFAULT_SCHEDULE_TIMEZONE),
 });
 export type FullSchedule = z.infer<typeof FullSchedule>;
+
+// --- Expansion des evenements en instants UTC --------------------------------
+
+const DAY_MS = 86_400_000;
+
+type RecurringTiming = Extract<
+	ScheduleEvent["timing"],
+	{ repeat_every_weeks: number }
+>;
+
+/** Discrimine les deux formes de `timing` (recurrent vs ponctuel). */
+export function isRecurringTiming(
+	timing: ScheduleEvent["timing"],
+): timing is RecurringTiming {
+	return "repeat_every_weeks" in timing;
+}
+
+/** "PT2H30M" / "P1DT2H" -> millisecondes. Ignore annees/mois (ambigus). */
+export function parseIsoDurationMs(iso: string): number {
+	const m =
+		/^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(
+			(iso ?? "").trim(),
+		);
+	if (!m) return 0;
+	const [, w, d, h, min, s] = m;
+	return (
+		(Number(w ?? 0) * 7 * 24 * 3600 +
+			Number(d ?? 0) * 24 * 3600 +
+			Number(h ?? 0) * 3600 +
+			Number(min ?? 0) * 60 +
+			Number(s ?? 0)) *
+		1000
+	);
+}
+
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Decalage (ms) du fuseau `tz` par rapport a UTC a l'instant `utcMs`. */
+export function timeZoneOffsetMs(utcMs: number, tz: string): number {
+	let fmt = offsetFormatters.get(tz);
+	if (!fmt) {
+		fmt = new Intl.DateTimeFormat("en-US", {
+			timeZone: tz,
+			hourCycle: "h23",
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
+		offsetFormatters.set(tz, fmt);
+	}
+	const p: Record<string, number> = {};
+	for (const part of fmt.formatToParts(new Date(utcMs))) {
+		if (part.type !== "literal") p[part.type] = Number(part.value);
+	}
+	const asUtc = Date.UTC(
+		p.year,
+		p.month - 1,
+		p.day,
+		p.hour === 24 ? 0 : p.hour,
+		p.minute,
+		p.second,
+	);
+	// Les millisecondes de `utcMs` ne sont pas dans `asUtc` : on les retire avant de comparer.
+	return asUtc - (utcMs - (((utcMs % 1000) + 1000) % 1000));
+}
+
+/**
+ * Instant UTC (ms) correspondant a l'heure murale `wallMs` dans `tz`. `wallMs`
+ * est l'heure murale encodee comme si elle etait UTC (`Date.UTC(y, m, d, h, mi)`).
+ *
+ * Changements d'heure :
+ * - heure qui n'existe pas (passage a l'heure d'ete, 02:30 a Paris) : decalee
+ *   d'autant que le saut, donc 03:30 ;
+ * - heure qui existe deux fois (passage a l'heure d'hiver) : la premiere.
+ */
+export function zonedWallTimeToUtcMs(wallMs: number, tz: string): number {
+	// Un seul changement d'heure au plus autour de l'instant vise : les decalages
+	// la veille et le lendemain encadrent les deux interpretations possibles.
+	const before = timeZoneOffsetMs(wallMs - DAY_MS, tz);
+	const after = timeZoneOffsetMs(wallMs + DAY_MS, tz);
+	const candidates = [wallMs - before, wallMs - after].filter(
+		(utc) => timeZoneOffsetMs(utc, tz) === wallMs - utc,
+	);
+	if (candidates.length > 0) return Math.min(...candidates);
+	// Heure sautee : on garde le decalage d'avant le saut, ce qui la pousse en avant.
+	return wallMs - before;
+}
+
+/** Jour (index depuis 1970-01-01) contenant `ms`, l'instant etant lu en UTC. */
+function epochDay(ms: number): number {
+	return Math.floor(ms / DAY_MS);
+}
+
+/** 1 = lundi ... 7 = dimanche (1970-01-01 = jeudi = iso 4). */
+function isoWeekdayFromEpochDay(day: number): number {
+	return ((((day + 3) % 7) + 7) % 7) + 1;
+}
+
+function mondayEpochDay(day: number): number {
+	return day - (isoWeekdayFromEpochDay(day) - 1);
+}
+
+export type EventOccurrence = {
+	event: ScheduleEvent;
+	source: "recurring" | "one_off";
+	/** Instant UTC (ms) de debut. */
+	startAt: number;
+	/** Instant UTC (ms) de fin (exclu). */
+	endAt: number;
+};
+
+/**
+ * Occurrences concretes [startAt, endAt) d'un evenement qui recoupent
+ * [fromMs, toMs]. Ignore `enabled` : c'est a l'appelant de filtrer.
+ *
+ * Les heures de `days` sont lues dans `timezone` (voir `ScheduleEvent`). C'est la
+ * reference partagee par le backend et le front ; awoo-queen applique les memes
+ * regles en Rust (`api/schedule.rs`).
+ */
+export function expandEventOccurrences(
+	event: ScheduleEvent,
+	timezone: string,
+	fromMs: number,
+	toMs: number,
+): EventOccurrence[] {
+	const durationMs = parseIsoDurationMs(event.duration);
+	if (durationMs <= 0) return [];
+
+	if (!isRecurringTiming(event.timing)) {
+		const startAt = new Date(event.timing.date).getTime();
+		if (Number.isNaN(startAt)) return [];
+		const endAt = startAt + durationMs;
+		return endAt > fromMs && startAt < toMs
+			? [{ event, source: "one_off", startAt, endAt }]
+			: [];
+	}
+
+	const t = event.timing;
+	const firstMs = new Date(t.first_occurence).getTime();
+	const lastMs = t.last_occurence
+		? new Date(t.last_occurence).getTime()
+		: Number.POSITIVE_INFINITY;
+	if (Number.isNaN(firstMs)) return [];
+	const period = Math.max(1, t.repeat_every_weeks);
+	const firstMonday = mondayEpochDay(epochDay(firstMs));
+	const occurences = t.days.map((occ) => {
+		const { isoDay, time } = parseDayOccurence(occ);
+		const [h, m, s] = time.split(":").map(Number);
+		return {
+			isoDay,
+			timeMs: ((h || 0) * 3600 + (m || 0) * 60 + (s || 0)) * 1000,
+		};
+	});
+
+	// Jours muraux a parcourir : la marge de deux jours couvre le decalage du
+	// fuseau (au plus +/-14 h) et un creneau commence la veille de `fromMs`.
+	const out: EventOccurrence[] = [];
+	for (let day = epochDay(fromMs) - 2; day <= epochDay(toMs) + 2; day++) {
+		const weeksSince = (mondayEpochDay(day) - firstMonday) / 7;
+		if (weeksSince < 0 || weeksSince % period !== 0) continue;
+		const isoWeekday = isoWeekdayFromEpochDay(day);
+		for (const occ of occurences) {
+			if (occ.isoDay !== isoWeekday) continue;
+			const startAt = zonedWallTimeToUtcMs(day * DAY_MS + occ.timeMs, timezone);
+			if (startAt < firstMs || startAt > lastMs) continue;
+			const endAt = startAt + durationMs;
+			if (endAt > fromMs && startAt < toMs) {
+				out.push({ event, source: "recurring", startAt, endAt });
+			}
+		}
+	}
+	return out;
+}
 
 export const ScheduleWithMetadata = FullSchedule.extend({
 	version: z.string(),
