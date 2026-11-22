@@ -238,6 +238,41 @@ export const ScheduleEvent = z.object({
 });
 export type ScheduleEvent = z.infer<typeof ScheduleEvent>;
 
+/** Heure murale "HH:MM" (00:00 a 23:59). */
+export const WallClockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, {
+	message: "Heure attendue au format HH:MM",
+});
+export type WallClockTime = z.infer<typeof WallClockTime>;
+
+/**
+ * Plage quotidienne pendant laquelle les titres marques `explicit` ne doivent pas
+ * etre diffuses (ex. 06:00 -> 22:00).
+ *
+ * - `from` et `to` sont des heures murales dans le fuseau du planning
+ *   (`FullSchedule.timezone`), comme les heures de `days` : 06:00 reste 06:00 a
+ *   Paris toute l'annee, heure d'ete comprise.
+ * - La plage est semi-ouverte `[from, to)` : un titre qui demarre a 22:00 pile
+ *   est autorise.
+ * - `from > to` traverse minuit (22:00 -> 06:00 interdit la nuit).
+ * - `from === to` est refuse : on ne saurait pas dire si c'est « toute la
+ *   journee » ou « jamais ».
+ * - `enabled: false` conserve les heures saisies sans rien restreindre.
+ *
+ * Le direct n'est pas concerne : le serveur de diffusion ne choisit pas ce qui
+ * passe pendant un live.
+ */
+export const ExplicitRestriction = z
+	.object({
+		enabled: z.boolean().default(false),
+		from: WallClockTime,
+		to: WallClockTime,
+	})
+	.refine((r) => r.from !== r.to, {
+		message: "Le debut et la fin de la plage doivent etre differents",
+		path: ["to"],
+	});
+export type ExplicitRestriction = z.infer<typeof ExplicitRestriction>;
+
 export const FullSchedule = z.object({
 	events: ScheduleEvent.array(),
 	default_playlist_id: z.string().optional(),
@@ -248,6 +283,11 @@ export const FullSchedule = z.object({
 	 * saisies.
 	 */
 	timezone: ScheduleTimezone.default(DEFAULT_SCHEDULE_TIMEZONE),
+	/**
+	 * Plage horaire sans titres explicites (heures murales dans `timezone`).
+	 * Absente : aucune restriction, ce qui est le comportement historique.
+	 */
+	explicit_restriction: ExplicitRestriction.optional(),
 });
 export type FullSchedule = z.infer<typeof FullSchedule>;
 
@@ -425,6 +465,55 @@ export function expandEventOccurrences(
 		}
 	}
 	return out;
+}
+
+// --- Restriction des titres explicites ---------------------------------------
+
+/** "HH:MM" -> minutes depuis minuit. */
+function wallClockMinutes(time: string): number {
+	const [h, m] = time.split(":").map(Number);
+	return (h || 0) * 60 + (m || 0);
+}
+
+/** Minute de la journee (0..1439) affichee par l'horloge murale de `tz` a `instantMs`. */
+export function wallMinuteOfDay(instantMs: number, tz: string): number {
+	const wall = instantMs + timeZoneOffsetMs(instantMs, tz);
+	return Math.floor((((wall % DAY_MS) + DAY_MS) % DAY_MS) / 60_000);
+}
+
+/** Vrai si la minute murale `minute` tombe dans `[from, to)` (minuit gere). */
+export function isInRestrictedWindow(
+	restriction: Pick<ExplicitRestriction, "from" | "to">,
+	minute: number,
+): boolean {
+	const from = wallClockMinutes(restriction.from);
+	const to = wallClockMinutes(restriction.to);
+	if (from === to) return false;
+	return from < to
+		? minute >= from && minute < to
+		: minute >= from || minute < to;
+}
+
+/**
+ * Un titre explicite peut-il demarrer a `instantMs` (instant UTC, ms) ?
+ *
+ * Vrai sans restriction, avec une restriction desactivee, ou hors de la plage
+ * interdite lue dans le fuseau du planning. C'est la reference ; awoo-queen
+ * applique la meme regle en Rust (`ExplicitRestriction` dans
+ * `api/schedule.rs`) et, quand il connait la duree du titre, refuse aussi un
+ * titre qui deborderait sur la plage.
+ */
+export function isExplicitAllowedAt(
+	schedule: {
+		explicit_restriction?: ExplicitRestriction;
+		timezone?: string;
+	},
+	instantMs: number,
+): boolean {
+	const restriction = schedule.explicit_restriction;
+	if (!restriction?.enabled) return true;
+	const tz = schedule.timezone || DEFAULT_SCHEDULE_TIMEZONE;
+	return !isInRestrictedWindow(restriction, wallMinuteOfDay(instantMs, tz));
 }
 
 export const ScheduleWithMetadata = FullSchedule.extend({

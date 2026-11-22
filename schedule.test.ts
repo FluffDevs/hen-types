@@ -3,8 +3,11 @@ import { MediaCategory } from "./music";
 import {
 	AlternateSource,
 	DEFAULT_SCHEDULE_TIMEZONE,
+	ExplicitRestriction,
 	expandEventOccurrences,
 	FullSchedule,
+	isExplicitAllowedAt,
+	isInRestrictedWindow,
 	ScheduleContent,
 	type ScheduleEvent,
 	SLOT_TYPES,
@@ -274,5 +277,103 @@ describe("fuseau horaire du planning", () => {
 				startAt: Date.parse("2026-11-22T17:00:00Z"),
 			}),
 		]);
+	});
+});
+
+describe("restriction des titres explicites", () => {
+	const day = { enabled: true, from: "06:00", to: "22:00" };
+	const paris = (explicit_restriction: ExplicitRestriction | undefined) => ({
+		timezone: "Europe/Paris",
+		explicit_restriction,
+	});
+	const at = (iso: string) => Date.parse(iso);
+
+	it("est absente par defaut : aucun changement de comportement", () => {
+		const parsed = FullSchedule.parse({ events: [] });
+		expect(parsed.explicit_restriction).toBeUndefined();
+		expect(isExplicitAllowedAt(parsed, at("2026-11-22T12:00:00Z"))).toBe(true);
+	});
+
+	it("valide le format HH:MM et refuse une plage vide", () => {
+		expect(
+			FullSchedule.safeParse({ events: [], explicit_restriction: day }).success,
+		).toBe(true);
+		for (const bad of [
+			{ enabled: true, from: "6:00", to: "22:00" },
+			{ enabled: true, from: "06:00", to: "24:00" },
+			{ enabled: true, from: "06:00", to: "22:60" },
+			{ enabled: true, from: "06:00:00", to: "22:00" },
+			{ enabled: true, from: "06:00", to: "06:00" },
+		]) {
+			expect(
+				FullSchedule.safeParse({ events: [], explicit_restriction: bad })
+					.success,
+			).toBe(false);
+		}
+	});
+
+	it("met enabled a false par defaut", () => {
+		const parsed = ExplicitRestriction.parse({ from: "06:00", to: "22:00" });
+		expect(parsed.enabled).toBe(false);
+		expect(isExplicitAllowedAt(paris(parsed), at("2026-11-22T12:00:00Z"))).toBe(
+			true,
+		);
+	});
+
+	it("lit la plage en heure de Paris, heure d'hiver", () => {
+		// Hiver : Paris = UTC+1. 06:00 Paris = 05:00 UTC, 22:00 Paris = 21:00 UTC.
+		const s = paris(day);
+		expect(isExplicitAllowedAt(s, at("2026-11-22T04:59:00Z"))).toBe(true);
+		expect(isExplicitAllowedAt(s, at("2026-11-22T05:00:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(s, at("2026-11-22T20:59:59Z"))).toBe(false);
+		// Borne de fin exclue : 22:00 pile est autorise.
+		expect(isExplicitAllowedAt(s, at("2026-11-22T21:00:00Z"))).toBe(true);
+	});
+
+	it("suit l'heure d'ete (DST) sans glisser", () => {
+		// Ete : Paris = UTC+2. 06:00 Paris = 04:00 UTC.
+		const s = paris(day);
+		expect(isExplicitAllowedAt(s, at("2026-07-05T03:59:00Z"))).toBe(true);
+		expect(isExplicitAllowedAt(s, at("2026-07-05T04:00:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(s, at("2026-07-05T20:00:00Z"))).toBe(true);
+		// En UTC, la meme plage est decalee : la regle depend bien du fuseau.
+		expect(
+			isExplicitAllowedAt(
+				{ timezone: "UTC", explicit_restriction: day },
+				at("2026-07-05T04:00:00Z"),
+			),
+		).toBe(true);
+	});
+
+	it("gere les nuits de changement d'heure", () => {
+		// 29 mars 2026, 02:00 -> 03:00 a Paris. Plage 02:30 -> 03:30 (murale) :
+		// a 01:00 UTC il est 03:00 a Paris, donc dans la plage.
+		const spring = paris({ enabled: true, from: "02:30", to: "03:30" });
+		expect(isExplicitAllowedAt(spring, at("2026-03-29T00:59:00Z"))).toBe(true);
+		expect(isExplicitAllowedAt(spring, at("2026-03-29T01:00:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(spring, at("2026-03-29T01:30:00Z"))).toBe(true);
+		// 25 octobre 2026, 03:00 -> 02:00 : 02:30 arrive deux fois, interdit les deux.
+		const autumn = paris({ enabled: true, from: "02:00", to: "03:00" });
+		expect(isExplicitAllowedAt(autumn, at("2026-10-25T00:30:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(autumn, at("2026-10-25T01:30:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(autumn, at("2026-10-25T02:00:00Z"))).toBe(true);
+	});
+
+	it("traverse minuit quand from > to", () => {
+		const night = paris({ enabled: true, from: "22:00", to: "06:00" });
+		expect(isExplicitAllowedAt(night, at("2026-11-22T20:59:00Z"))).toBe(true);
+		expect(isExplicitAllowedAt(night, at("2026-11-22T21:00:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(night, at("2026-11-22T23:30:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(night, at("2026-11-23T04:59:00Z"))).toBe(false);
+		expect(isExplicitAllowedAt(night, at("2026-11-23T05:00:00Z"))).toBe(true);
+		expect(isInRestrictedWindow({ from: "22:00", to: "06:00" }, 0)).toBe(true);
+		expect(isInRestrictedWindow({ from: "22:00", to: "06:00" }, 12 * 60)).toBe(
+			false,
+		);
+	});
+
+	it("ne restreint rien quand enabled est faux", () => {
+		const off = paris({ ...day, enabled: false });
+		expect(isExplicitAllowedAt(off, at("2026-11-22T12:00:00Z"))).toBe(true);
 	});
 });

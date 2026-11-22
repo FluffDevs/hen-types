@@ -191,7 +191,14 @@ Cette table est verrouillée par un test dédié (voir §9).
 
 ### `FullSchedule` / `ScheduleWithMetadata`
 
-- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?, timezone}` — le document éditable (ce qu'on envoie en `PUT`). `timezone` est un fuseau IANA validé, `Europe/Paris` par défaut (les anciens documents sans ce champ sont donc lus en heure de Paris, qui est l'heure dans laquelle ils ont été saisis).
+- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?, timezone, explicit_restriction?}` — le document éditable (ce qu'on envoie en `PUT`). `timezone` est un fuseau IANA validé, `Europe/Paris` par défaut (les anciens documents sans ce champ sont donc lus en heure de Paris, qui est l'heure dans laquelle ils ont été saisis).
+- `explicit_restriction?: {enabled, from: "HH:MM", to: "HH:MM"}` (`ExplicitRestriction`) — plage quotidienne pendant laquelle les titres marqués `explicit` (`MusicMetadata.explicit`) ne doivent pas être diffusés. Absente = aucune restriction (comportement historique). Règles :
+  - `from` / `to` sont des heures **murales** dans `timezone` (06:00 reste 06:00 à Paris, heure d'été comprise) ;
+  - plage semi-ouverte `[from, to)` : 22:00 pile est autorisé quand `to = "22:00"` ;
+  - `from > to` traverse minuit (`22:00 → 06:00`) ; `from === to` est refusé ;
+  - `enabled` vaut `false` par défaut : les heures restent saisies mais rien n'est restreint ;
+  - le direct (`live`) n'est pas concerné.
+- Helpers : `isExplicitAllowedAt(schedule, instantMs)` (un titre explicite peut-il démarrer à cet instant ?), `isInRestrictedWindow(restriction, minute)`, `wallMinuteOfDay(instantMs, tz)`. Ce sont les références ; awoo-queen applique la même règle en Rust et refuse en plus un titre explicite qui **déborderait** sur la plage quand il connaît sa durée.
 - `ScheduleWithMetadata = FullSchedule.extend({version, updated_by, updated_at})` — ajoute le verrouillage optimiste et les champs d'audit ; c'est ce que renvoie `GET`.
 
 ### `ResolvedSlot`
@@ -298,6 +305,13 @@ Seul fichier de test du module : `schedule.test.ts` (vitest). Deux suites :
 - `MediaCategory.options` contient `"vod"`.
 - `SlotType.options` contient `"vod"`, et `SLOT_TYPES.vod` est **exactement** `{label: "VOD / Rediffusion", content_kind: "media", category: "vod", default_priority: 50}` — verrouille cette ligne de table contre toute dérive accidentelle.
 - Un contenu `media` avec une piste de catégorie `vod` se parse correctement.
+
+**« restriction des titres explicites »**
+- Absente par défaut ; sans elle, `isExplicitAllowedAt` répond toujours `true`.
+- Format `HH:MM` strict (`6:00`, `24:00`, `22:60`, `06:00:00` refusés) ; `from === to` refusé ; `enabled` vaut `false` par défaut.
+- Plage lue en heure de Paris en hiver (UTC+1) comme en été (UTC+2) ; borne de fin exclue.
+- Nuits de changement d'heure : heure sautée et heure doublée traitées sur l'horloge murale.
+- Plage à cheval sur minuit (`22:00 → 06:00`).
 
 Aucun fichier de test n'existe pour `music.ts`, `playlist.ts`, `animator.ts`, `genres.ts` ou `languages.ts` **dans le module lui-même** — certains comportements (labels de catégorie, etc.) sont testés côté application consommatrice (ex. `admin-panel-front/src/lib/mediaCategoryLabels.test.ts`).
 
