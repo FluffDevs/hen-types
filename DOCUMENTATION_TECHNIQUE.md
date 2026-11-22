@@ -281,6 +281,33 @@ Aucune fonction client dans ce fichier.
 
 ---
 
+## 8 bis. `permissions.ts` — catalogue des droits (groupes Cognito)
+
+Source unique des droits du panel, utilisée par le backend (contrôle sur chaque route) et le front (menu, boutons, page « Gestion des droits »). Module pur : aucun appel réseau.
+
+- **Format** : un groupe Cognito = un droit `page:action`, ou `page:action:categorie` pour `library` et `uploads` (catégories = `MediaCategory`). Ex. `uploads:create:musics`.
+- **Indépendance** : aucun droit n'en implique un autre (même la lecture se donne explicitement). Seul `ADMIN_ALL` (`"admin:all"`) donne tout, y compris les pages futures.
+- **`TEAM_GROUPS`** (`team:radiovolunteer`, `team:associate`, `team:streamer`) : appartenance seulement, aucun droit.
+- **`EXTERNAL_GROUPS`** (`gestionconvsfur`) et tout groupe inconnu : « non géré », jamais modifié par le panel.
+- **`LEGACY_GROUP_MIGRATION`** : correspondances anciens → nouveaux groupes. Sert d'**alias** pendant la transition (option `legacyAliases`, vraie par défaut) et de **plan de migration** (`legacyMigrationPlan`).
+
+| Fonction | Rôle |
+|---|---|
+| `hasPermission(groups, perm, opts?)` | vrai si `admin:all` ou le droit exact (alias appliqués) |
+| `hasAnyPermission(groups, perms, opts?)` | au moins un des droits |
+| `isAdmin(groups, opts?)` | `admin:all` (ou `admins` pendant la transition) |
+| `permissionsOf(groups, opts?)` | droits effectifs (admin développé en tout le catalogue) |
+| `effectiveGroups(groups, opts?)` | groupes du jeton + groupes donnés par les alias |
+| `allPermissions()` / `allCatalogGroups()` | catalogue (sans / avec `admin:all` et `team:*`) |
+| `classifyGroup(name)` | `admin` / `permission` / `team` / `legacy` / `external` / `unknown` |
+| `parsePermission`, `permissionLabel`, `catalogGroupDescription` | analyse et libellés FR |
+| `legacyMigrationPlan(userGroups)` | `{ legacy, add, alreadyPresent }` pour un utilisateur |
+| `mediaPermissions(access, cat)`, `canAccessMedia`, `mediaCategoriesFor` | droits qui ouvrent une route média (`list`, `download`, `create`, `update`, `delete`) |
+
+Routes média : une même route sert plusieurs pages, d'où plusieurs droits possibles (un seul suffit). `list` (liste, métadonnées) : `library:read:<cat>`, `uploads:read:<cat>`, `schedule:read`, plus `playlists:read` et `music-validation:read` pour `musics`, `branding:read` pour `jingles`. `download` : idem sans `schedule:read` ni `playlists:read`. Écritures : `uploads:<action>:<cat>`, plus `branding:<action>` pour `jingles` et `music-validation:update` pour la mise à jour des `musics`.
+
+Ajouter une page : une entrée dans `PERMISSION_PAGES` **et** dans le type `Permission`, un test dans `permissions.test.ts`, puis « Synchroniser le catalogue » dans le panel (création idempotente des groupes Cognito).
+
 ## 9. Garanties testées
 
 Seul fichier de test du module : `schedule.test.ts` (vitest). Deux suites :
