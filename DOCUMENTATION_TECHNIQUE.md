@@ -108,6 +108,10 @@ Stocké dans une **annotation S3** (extension non standard, jusqu'à 1 Mo, JSON 
 | `cue_in` | `number?` (coercé) | Point de départ de lecture (secondes) |
 | `cue_out` | `number?` (coercé) | Point de fin de lecture (secondes) |
 | `sacem_registry` | `string?` | Référence SACEM |
+| `lufs` | `number?` (-70 à 10, invalide → absent) | Volume perçu intégré du fichier (LUFS, ITU-R BS.1770-4 / EBU R128). **Mesuré par le backend** à l'upload (et rattrapé pour l'existant), jamais saisi à la main |
+| `true_peak` | `number?` (-100 à 30, invalide → absent) | Crête vraie du fichier (dBTP, suréchantillonnage x4). Mesurée avec `lufs` |
+
+`lufs` et `true_peak` utilisent `.catch(undefined)` : une valeur cassée fait perdre la mesure, jamais la fiche entière (une fiche que Zod refuse disparaît des pages de listing). Awoo-Queen s'en sert pour calculer le gain par titre envoyé à Liquidsoap ; absentes, le titre est diffusé sans correction, comme avant.
 
 ### `Music`
 
