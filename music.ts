@@ -34,6 +34,16 @@ export const MusicMetadata = z.object({
 	cue_in: z.coerce.number().optional(),
 	cue_out: z.coerce.number().optional(),
 	sacem_registry: z.string().optional(),
+	// Measured from the file by the backend (ITU-R BS.1770-4 / EBU R128), never
+	// typed by hand. Absent until measured, and for files that cannot be decoded.
+	// `.catch(undefined)`: a broken value costs the measure, never the whole
+	// record (an unparsable record is dropped from the listing pages).
+	lufs: z.number().min(-70).max(10).optional().catch(undefined).meta({
+		description: "Integrated loudness of the file, in LUFS",
+	}),
+	true_peak: z.number().min(-100).max(30).optional().catch(undefined).meta({
+		description: "Maximum true peak of the file (4x oversampled), in dBTP",
+	}),
 });
 export type MusicMetadata = z.infer<typeof MusicMetadata>;
 
