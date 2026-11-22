@@ -41,7 +41,10 @@ n'importe pas ce module : il recopie les formats, à mettre à jour à la main.
 
 ## Documentation transverse
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) : résumé public de l'architecture et des
-  MR ouvertes de ce dépôt (le document complet est dans le dépôt privé `radio-config`).
-- [`docs/MERGE-ORDER.md`](docs/MERGE-ORDER.md) : ordre de merge des MR de hen-types et
-  procédure de re-pointage des sous-modules.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) : résumé public de l'architecture et du
+  contenu de l'intégration de novembre 2026 (le document complet est dans le dépôt privé
+  `radio-config`).
+- [`docs/MERGE-ORDER.md`](docs/MERGE-ORDER.md) : ordre de merge des MR d'intégration des
+  cinq dépôts et procédure de re-pointage des sous-modules.
+- MR d'intégration de novembre 2026 de ce dépôt :
+  https://github.com/FluffDevs/hen-types/pull/7 (à merger en premier).

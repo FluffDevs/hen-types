@@ -38,13 +38,23 @@ flowchart LR
 Le backend et le front pointent chacun leur sous-module sur un commit précis de
 hen-types. Sur `main`, les deux pointent sur `b25270b` (le `main` actuel de ce dépôt).
 
-## Évolutions en cours (MR ouvertes de ce dépôt)
+## Contenu de l'intégration de novembre 2026
 
-| MR | Contenu | Utilisée par |
+Les MR ouvertes des cinq dépôts sont regroupées en **une MR d'intégration par dépôt**
+(branche `integration/novembre-2026`) ; les MR d'origine sont fermées, non supprimées.
+Pour ce dépôt : [hen-types #7](https://github.com/FluffDevs/hen-types/pull/7). Les MR
+d'intégration du backend et du front pointent leur sous-module sur `ed2a13d` (branche
+d'intégration de hen-types).
+
+| Fonctionnalité | Ajout dans hen-types | Utilisée par (MR d'intégration) |
 |---|---|---|
-| [#2](https://github.com/FluffDevs/hen-types/pull/2) | `FullSchedule.timezone` (`Europe/Paris` par défaut), heures récurrentes en heure murale, `expandEventOccurrences` | backend #7, front #6 (awoo-queen #5 en Rust) |
-| [#3](https://github.com/FluffDevs/hen-types/pull/3) | `explicit_restriction` (plage sans titres explicites), **empilée sur #2** | backend #9, front #9 (awoo-queen #9) |
-| [#4](https://github.com/FluffDevs/hen-types/pull/4) | `lufs` et `true_peak` sur `MusicMetadata` | backend #11, front #11 (awoo-queen #11) |
-| [#5](https://github.com/FluffDevs/hen-types/pull/5) | `permissions.ts` : catalogue des droits Cognito et helpers | backend #12, #13, #14 ; front #12, #13, #14, #16 |
+| Fuseau horaire du planning | `FullSchedule.timezone` (`Europe/Paris` par défaut), heures récurrentes en heure murale, `expandEventOccurrences` | [backend #17](https://github.com/FluffDevs/admin-panel-backend/pull/17), [front #19](https://github.com/MatheoCASSY/admin-panel-front/pull/19), [awoo-queen #14](https://github.com/FluffDevs/awoo-queen/pull/14) (en Rust) |
+| Pas d'explicite sur une plage horaire | `explicit_restriction` et helpers | backend #17, front #19, awoo-queen #14 |
+| Volume mesuré à l'upload | `lufs` et `true_peak` sur `MusicMetadata` | backend #17, front #19, awoo-queen #14 |
+| Refonte des droits | `permissions.ts` : catalogue des droits et helpers | backend #17, front #19 |
+| CI du front | directive eslint sur la ligne du `type Json` de `schedule.ts` | front #19 |
 
-Toutes ouvertes, aucune mergée. Ordre et procédure : [`MERGE-ORDER.md`](MERGE-ORDER.md).
+Ordre de merge : **hen-types #7 en premier** (puis re-pointer les sous-modules du backend
+et du front sur `main` de hen-types), puis la configuration du serveur de diffusion
+([radio-config #8](https://github.com/FluffDevs/radio-config/pull/8)), puis backend #17
+et awoo-queen #14 ensemble, puis front #19. Détail : [`MERGE-ORDER.md`](MERGE-ORDER.md).
