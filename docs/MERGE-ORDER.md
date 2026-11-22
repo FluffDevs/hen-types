@@ -1,9 +1,10 @@
 # hen-types — Ordre de merge (partie publique)
 
-> L'ordre de merge **global** des 38 MR ouvertes des cinq dépôts, les conflits connus et
+> L'ordre de merge **global** des MR ouvertes des cinq dépôts, les conflits connus et
 > la checklist de déploiement sont dans le dépôt privé `FluffDevs/radio-config`, fichier
 > `docs/MERGE-ORDER.md` (recopié dans `admin-panel-backend`, `admin-panel-front` et
-> `awoo-queen`). Ce fichier ne garde que ce qui concerne hen-types. Établi le 2026-11-22.
+> `awoo-queen`). Ce fichier ne garde que ce qui concerne hen-types. Établi le 2026-11-22,
+> mis à jour le même jour après la passe d'harmonisation des MR.
 
 ## 1. Merger les quatre MR de hen-types en premier
 
@@ -26,7 +27,7 @@ Aujourd'hui, les MR parentes pointent sur des commits de **branches** de hen-typ
 | `feat/schedule-timezone` | `5185272` | backend #7, front #6 |
 | `feat/explicit-hours` | `1096e77` | backend #9, front #9 |
 | `feat/track-loudness` | `573cfad` | backend #11, front #11 |
-| `feat/permissions` | `fee3ae4` | backend #12, #13, #14 ; front #12, #13, #14, #16 |
+| `feat/permissions` | `fee3ae4` | backend #8, #10, #12, #13, #14 ; front #7, #10, #12, #13, #14, #16 |
 
 Avant le merge de chacune, re-pointer son sous-module sur `H` :
 
@@ -39,6 +40,11 @@ git commit -m "chore: pointe hen-types sur main"
 
 Toutes les MR pointant alors sur le même commit, le pointeur ne crée plus de conflit
 entre elles.
+
+Côté parents, plusieurs MR sont désormais **empilées** : backend #8, #10 et front #7, #10
+sur `feat/permissions` (déjà adaptées au catalogue des droits : `monitoring:read`,
+`play-history:read`) ; front #13 et #14 sur `feat/redesign` (front #16). Elles pointent
+toutes sur `fee3ae4` (#5) et se re-pointent sur `H` comme les autres.
 
 ## 3. Tests
 
