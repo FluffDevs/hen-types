@@ -8,8 +8,11 @@ import {
 	FullSchedule,
 	isExplicitAllowedAt,
 	isInRestrictedWindow,
+	isValidTimeZone,
+	parseIsoDurationMs,
 	ScheduleContent,
-	type ScheduleEvent,
+	ScheduleDuration,
+	ScheduleEvent,
 	SLOT_TYPES,
 	SlotType,
 	zonedWallTimeToUtcMs,
@@ -278,6 +281,230 @@ describe("fuseau horaire du planning", () => {
 			}),
 		]);
 	});
+
+	it("n'accepte que les noms IANA canoniques (et UTC)", () => {
+		expect(isValidTimeZone("Europe/Paris")).toBe(true);
+		expect(isValidTimeZone("UTC")).toBe(true);
+		expect(isValidTimeZone("America/New_York")).toBe(true);
+		for (const bad of [
+			"+01:00",
+			"-05:00",
+			"+0100",
+			"−01:00",
+			"europe/paris",
+			"EUROPE/PARIS",
+			"utc",
+			"Mars/Olympus",
+			"",
+		]) {
+			expect(isValidTimeZone(bad)).toBe(false);
+			expect(
+				FullSchedule.safeParse({ events: [], timezone: bad }).success,
+			).toBe(false);
+		}
+	});
+
+	it("joue des la premiere semaine un lundi 00:30 a Paris (dimanche 23:30 UTC)", () => {
+		// first_occurence = lundi 5 janvier 2026 a minuit UTC. Lundi 00:30 a Paris
+		// = dimanche 4 janvier 23:30 UTC, avant l'instant d'ancrage mais le jour
+		// mural (lundi 5) n'est pas avant la date d'ancrage : l'occurrence joue.
+		const out = expandEventOccurrences(
+			liveEvent(["MONDAY:00:30:00"]),
+			"Europe/Paris",
+			Date.parse("2026-01-04T00:00:00Z"),
+			Date.parse("2026-01-13T00:00:00Z"),
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-01-04T23:30:00.000Z",
+			"2026-01-11T23:30:00.000Z",
+		]);
+	});
+
+	it("compare la date murale a la date UTC de first_occurence, pas l'instant", () => {
+		// Ancrage mercredi 7 janvier 2026 a 20:00 UTC.
+		const e = liveEvent(
+			["MONDAY:10:00:00", "WEDNESDAY:00:30:00", "WEDNESDAY:10:00:00"],
+			{ first_occurence: "2026-01-07T20:00:00.000Z" },
+		);
+		const out = expandEventOccurrences(
+			e,
+			"Europe/Paris",
+			Date.parse("2026-01-05T00:00:00Z"),
+			Date.parse("2026-01-08T00:00:00Z"),
+		);
+		// Lundi 5 : date murale avant l'ancrage, ecarte. Mercredi 00:30 Paris
+		// (mardi 23:30 UTC) et mercredi 10:00 Paris (avant 20:00 UTC) : le jour
+		// mural est le 7, ils jouent.
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-01-06T23:30:00.000Z",
+			"2026-01-07T09:00:00.000Z",
+		]);
+	});
+
+	it("ecarte un jour mural anterieur a l'ancrage meme si l'instant UTC est apres", () => {
+		// Fuseau a l'ouest d'UTC : mardi 23:00 a New York = mercredi 04:00 UTC,
+		// date UTC egale a l'ancrage, mais date murale (mardi) anterieure.
+		const e = liveEvent(["TUESDAY:23:00:00", "WEDNESDAY:23:00:00"], {
+			first_occurence: "2026-01-07T00:00:00.000Z",
+		});
+		const out = expandEventOccurrences(
+			e,
+			"America/New_York",
+			Date.parse("2026-01-05T00:00:00Z"),
+			Date.parse("2026-01-09T00:00:00Z"),
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-01-08T04:00:00.000Z",
+		]);
+	});
+
+	it("passage a l'heure d'ete (29/03/2026) : 02:30 joue a 03:30, la duree reste reelle", () => {
+		const e = {
+			...liveEvent(["SUNDAY:02:30:00"]),
+			duration: "PT2H",
+		} as ScheduleEvent;
+		const out = expandEventOccurrences(
+			e,
+			"Europe/Paris",
+			Date.parse("2026-03-21T00:00:00Z"),
+			Date.parse("2026-04-06T00:00:00Z"),
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-03-22T01:30:00.000Z", // 02:30 CET
+			"2026-03-29T01:30:00.000Z", // 03:30 CEST (02:30 n'existe pas)
+			"2026-04-05T00:30:00.000Z", // 02:30 CEST
+		]);
+		for (const o of out) expect(o.endAt - o.startAt).toBe(2 * 3_600_000);
+	});
+
+	it("passage a l'heure d'hiver (25/10/2026) : 02:30 doublee, la premiere", () => {
+		const out = expandEventOccurrences(
+			liveEvent(["SUNDAY:02:30:00"]),
+			"Europe/Paris",
+			Date.parse("2026-10-17T00:00:00Z"),
+			Date.parse("2026-11-02T00:00:00Z"),
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-10-18T00:30:00.000Z", // 02:30 CEST
+			"2026-10-25T00:30:00.000Z", // premiere 02:30 (CEST)
+			"2026-11-01T01:30:00.000Z", // 02:30 CET
+		]);
+	});
+
+	it("garde une occurrence longue commencee avant la fenetre et encore en cours", () => {
+		// Vendredi 20 novembre 2026 20:00 Paris (19:00 UTC), 4 jours : jusqu'au
+		// mardi 24 19:00 UTC. Fenetre : lundi 23 a midi.
+		const e = {
+			...liveEvent(["FRIDAY:20:00:00"]),
+			duration: "P4D",
+		} as ScheduleEvent;
+		const out = expandEventOccurrences(
+			e,
+			"Europe/Paris",
+			Date.parse("2026-11-23T12:00:00Z"),
+			Date.parse("2026-11-23T13:00:00Z"),
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-11-20T19:00:00.000Z",
+		]);
+	});
+
+	it("refuse une fenetre non bornee, sauf si last_occurence la borne", () => {
+		const open = liveEvent(["SUNDAY:18:00:00"]);
+		expect(() =>
+			expandEventOccurrences(
+				open,
+				"Europe/Paris",
+				Date.parse("2026-11-01T00:00:00Z"),
+				Number.POSITIVE_INFINITY,
+			),
+		).toThrow(RangeError);
+		expect(() =>
+			expandEventOccurrences(
+				open,
+				"Europe/Paris",
+				Number.NEGATIVE_INFINITY,
+				Date.parse("2026-11-01T00:00:00Z"),
+			),
+		).toThrow(RangeError);
+		expect(
+			expandEventOccurrences(open, "Europe/Paris", Number.NaN, Number.NaN),
+		).toEqual([]);
+
+		const bounded = liveEvent(["SUNDAY:18:00:00"], {
+			first_occurence: "2026-11-01T00:00:00.000Z",
+			last_occurence: "2026-11-16T00:00:00.000Z",
+		});
+		const out = expandEventOccurrences(
+			bounded,
+			"Europe/Paris",
+			Date.parse("2026-11-01T00:00:00Z"),
+			Number.POSITIVE_INFINITY,
+		);
+		expect(out.map((o) => iso(o.startAt))).toEqual([
+			"2026-11-01T17:00:00.000Z",
+			"2026-11-08T17:00:00.000Z",
+			"2026-11-15T17:00:00.000Z",
+		]);
+	});
+});
+
+describe("duree d'un creneau", () => {
+	it("accepte semaines, jours, heures, minutes, secondes", () => {
+		for (const ok of [
+			"PT1H",
+			"PT1H30M",
+			"P1DT2H",
+			"P1W",
+			"PT90S",
+			"PT1.5S",
+			"PT0S",
+		]) {
+			expect(ScheduleDuration.safeParse(ok).success).toBe(true);
+		}
+		expect(parseIsoDurationMs("PT1H30M")).toBe(5_400_000);
+		expect(parseIsoDurationMs("P1DT2H")).toBe(26 * 3_600_000);
+		expect(parseIsoDurationMs("PT1.5S")).toBe(1_500);
+	});
+
+	it("refuse annees, mois, virgule decimale et fractions hors secondes", () => {
+		for (const bad of [
+			"P1Y",
+			"P1M",
+			"P1Y2M",
+			"P1MT1H",
+			"PT1,5S",
+			"PT1.5H",
+			"P",
+			"PT",
+			"1H",
+			"",
+		]) {
+			expect(ScheduleDuration.safeParse(bad).success).toBe(false);
+			// Ce que le schema refuse, parseIsoDurationMs le ramene a 0.
+			expect(parseIsoDurationMs(bad)).toBe(0);
+		}
+	});
+
+	it("s'applique au champ duration des evenements", () => {
+		const base = {
+			timing: { date: "2026-11-22T17:00:00.000Z" },
+			event_id: "e1",
+			title: "t",
+			slot_type: "playlist",
+			content: { kind: "playlist", playlist_id: "p" },
+			created_by: "u",
+			created_at: "2026-01-01T00:00:00.000Z",
+			updated_by: "u",
+			updated_at: "2026-01-01T00:00:00.000Z",
+		};
+		expect(ScheduleEvent.safeParse({ ...base, duration: "PT1H" }).success).toBe(
+			true,
+		);
+		expect(ScheduleEvent.safeParse({ ...base, duration: "P1M" }).success).toBe(
+			false,
+		);
+	});
 });
 
 describe("restriction des titres explicites", () => {
@@ -310,6 +537,30 @@ describe("restriction des titres explicites", () => {
 					.success,
 			).toBe(false);
 		}
+	});
+
+	it("n'exige from !== to que si la restriction est active", () => {
+		expect(
+			ExplicitRestriction.safeParse({
+				enabled: false,
+				from: "06:00",
+				to: "06:00",
+			}).success,
+		).toBe(true);
+		expect(
+			ExplicitRestriction.safeParse({ from: "06:00", to: "06:00" }).success,
+		).toBe(true);
+		expect(
+			ExplicitRestriction.safeParse({
+				enabled: true,
+				from: "06:00",
+				to: "06:00",
+			}).success,
+		).toBe(false);
+		const off = ExplicitRestriction.parse({ from: "06:00", to: "06:00" });
+		expect(isExplicitAllowedAt(paris(off), at("2026-11-22T05:30:00Z"))).toBe(
+			true,
+		);
 	});
 
 	it("met enabled a false par defaut", () => {

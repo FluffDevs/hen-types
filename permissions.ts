@@ -258,21 +258,31 @@ const categoryPermissions = <P extends string>(
  * Correspondances validees anciens -> nouveaux groupes. Sert a la fois :
  * - d'alias pendant la transition (un ancien groupe donne les nouveaux droits) ;
  * - de plan de migration (ajout des membres dans les nouveaux groupes).
+ *
+ * Avant la refonte, la page Accueil etait ouverte a tous les anciens groupes
+ * (`ALL_STAFF_GROUPS` du front) : chacun donne donc `dashboard:read`.
+ * `admins` n'en a pas besoin, `admin:all` donne tout.
  */
 export const LEGACY_GROUP_MIGRATION: Readonly<
 	Record<LegacyGroup, readonly CatalogGroup[]>
 > = {
 	admins: [ADMIN_ALL],
 	StaffRadio: ["dashboard:read", "team:radiovolunteer"],
-	AccesMediatheque: categoryPermissions("library:read"),
-	UploaderRadio: ["uploads:read:musics", "uploads:create:musics"],
+	AccesMediatheque: ["dashboard:read", ...categoryPermissions("library:read")],
+	UploaderRadio: [
+		"dashboard:read",
+		"uploads:read:musics",
+		"uploads:create:musics",
+	],
 	GestionPlaylist: [
+		"dashboard:read",
 		"playlists:read",
 		"playlists:create",
 		"playlists:update",
 		"playlists:delete",
 	],
 	ProgrammeursRadio: [
+		"dashboard:read",
 		"schedule:read",
 		"schedule:create",
 		"schedule:update",
@@ -281,9 +291,13 @@ export const LEGACY_GROUP_MIGRATION: Readonly<
 		"branding:create",
 		"branding:update",
 		"branding:delete",
+		// `/api/streaming/awoo-control` (skip...) etait ouvert a ProgrammeursRadio.
+		"monitoring:read",
+		"monitoring:update",
 	],
-	AccesAuxStatus: ["monitoring:read"],
+	AccesAuxStatus: ["dashboard:read", "monitoring:read"],
 	Streamers: [
+		"dashboard:read",
 		"my-live:read",
 		"my-live:update",
 		"branding:read",

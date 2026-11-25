@@ -4,7 +4,8 @@
 > dans le dépôt privé `FluffDevs/radio-config`, fichier `docs/MERGE-ORDER.md` (recopié
 > dans `admin-panel-backend`, `admin-panel-front` et `awoo-queen`). Ce fichier n'en garde
 > que le résumé, sans détail d'infrastructure. Mis à jour le 2026-11-22 après le
-> regroupement des MR en une MR d'intégration par dépôt.
+> regroupement des MR en une MR d'intégration par dépôt, puis le 2026-11-25 pour les
+> corrections de review.
 
 ## 1. Les MR d'intégration de novembre 2026
 
@@ -41,13 +42,16 @@ Ordre de merge et de déploiement :
 | https://github.com/FluffDevs/hen-types/pull/5 | `permissions.ts` : catalogue des droits et helpers |
 | https://github.com/FluffDevs/hen-types/pull/6 | Documentation |
 | (commit d'intégration) | Directive eslint placée sur la ligne du `type Json` (elle faisait échouer la CI du front) |
+| (commit d'intégration) | Corrections de review : `first_occurence` = date d'ancrage (date murale comparée à sa date UTC), occurrences longues en cours gardées et fenêtre non bornée refusée dans `expandEventOccurrences`, fuseaux IANA canoniques seulement, `duration` sans années / mois / virgule, `explicit_restriction` `from === to` accepté si désactivée, silence mesuré (`lufs` -70) distinct de « non mesuré », `dashboard:read` pour tous les anciens groupes et `monitoring:*` pour `ProgrammeursRadio` |
 
 Aucun conflit à la fusion.
 
 ## 3. Re-pointer les sous-modules après le merge
 
 Les MR d'intégration du backend et du front pointent aujourd'hui sur `ed2a13d` (branche
-`integration/novembre-2026` de hen-types). Après le merge de hen-types #7 :
+`integration/novembre-2026` de hen-types), qui ne contient pas encore les corrections de
+review : une fois celles-ci commitées sur la branche, re-pointer les deux sous-modules sur
+ce nouveau commit avant la review finale. Après le merge de hen-types #7 :
 
 ```sh
 git -C src/models fetch && git -C src/models checkout <commit main>      # admin-panel-backend

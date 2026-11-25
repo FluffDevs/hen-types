@@ -185,28 +185,59 @@ export const SLOT_TYPES: Record<
  */
 export const DEFAULT_SCHEDULE_TIMEZONE = "Europe/Paris";
 
-/** Vrai si `tz` est un fuseau IANA connu du runtime (`Europe/Paris`, `UTC`...). */
+/**
+ * Vrai si `tz` est un nom de fuseau IANA canonique connu du runtime
+ * (`Europe/Paris`, `UTC`...).
+ *
+ * Refuse ce que `Intl` accepterait mais qu'awoo-queen (Rust) ou un autre
+ * runtime lirait autrement : les decalages fixes (`+01:00`), les noms dont la
+ * casse n'est pas canonique (`europe/paris`) et, plus generalement, tout nom
+ * que le runtime ne rend pas a l'identique. `UTC` exact est toujours accepte.
+ */
 export function isValidTimeZone(tz: string): boolean {
+	if (typeof tz !== "string" || tz.length === 0) return false;
+	if (tz === "UTC") return true;
+	// Decalage fixe : `+01:00`, `-0500`, `+01`... (y compris le signe moins U+2212).
+	if (/^[+\-−]/.test(tz)) return false;
 	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: tz });
-		return true;
+		return (
+			new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions()
+				.timeZone === tz
+		);
 	} catch {
 		return false;
 	}
 }
 
-export const ScheduleTimezone = z
-	.string()
-	.min(1)
-	.refine(isValidTimeZone, { message: "Fuseau horaire IANA inconnu" });
+export const ScheduleTimezone = z.string().min(1).refine(isValidTimeZone, {
+	message: "Fuseau horaire IANA canonique attendu (ex. Europe/Paris, UTC)",
+});
+
+/**
+ * Duree ISO 8601 que `parseIsoDurationMs` sait lire : semaines, jours, heures,
+ * minutes, secondes (decimales permises sur les secondes seulement, avec un
+ * point). Annees et mois (`P1Y`, `P1M`) sont refuses : leur duree depend du
+ * calendrier et ils etaient silencieusement ramenes a 0. La virgule decimale et
+ * les fractions sur une autre unite que les secondes aussi. `PT0S` reste accepte
+ * (l'editeur le produit pour un creneau vide ; il ne genere aucune occurrence).
+ */
+const SCHEDULE_DURATION_RE =
+	/^P(?!$)(?:(\d+)W)?(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/;
+
+export const ScheduleDuration = z.string().regex(SCHEDULE_DURATION_RE, {
+	message:
+		"Duree ISO 8601 attendue en semaines, jours, heures, minutes ou secondes (ex. PT1H30M) ; annees, mois et virgule decimale refuses",
+});
 
 /**
  * Heures et dates d'un evenement :
  * - recurrent : les heures de `days` sont des heures « murales » dans le fuseau
  *   du planning (`FullSchedule.timezone`). `"SUNDAY:18:00:00"` joue a 18:00 a
- *   Paris toute l'annee, heure d'ete comprise. `first_occurence` /
- *   `last_occurence` sont des instants UTC qui bornent les occurrences ; la date
- *   UTC de `first_occurence` fixe aussi la semaine d'ancrage du cycle.
+ *   Paris toute l'annee, heure d'ete comprise. `first_occurence` est une date
+ *   d'ancrage : seule sa date UTC (`YYYY-MM-DD`) compte. Elle fixe la semaine
+ *   d'ancrage du cycle, et une occurrence n'est ecartee que si sa date murale
+ *   (dans le fuseau du planning) est anterieure a cette date. `last_occurence`
+ *   est un instant UTC : les occurrences qui demarrent apres sont ecartees.
  * - ponctuel : `date` est un instant UTC (avec `Z`).
  * `duration` est une duree reelle : un creneau de 2 h a cheval sur un changement
  * d'heure dure 2 h, meme si l'heure murale de fin parait decalee.
@@ -228,7 +259,7 @@ export const ScheduleEvent = z.object({
 	title: z.string(),
 	description: z.string().default(""),
 	slot_type: SlotType,
-	duration: z.iso.duration(),
+	duration: ScheduleDuration,
 	priority: z.number().int().min(0).max(100).default(1),
 	content: ScheduleContent,
 	created_by: z.string(),
@@ -254,9 +285,10 @@ export type WallClockTime = z.infer<typeof WallClockTime>;
  * - La plage est semi-ouverte `[from, to)` : un titre qui demarre a 22:00 pile
  *   est autorise.
  * - `from > to` traverse minuit (22:00 -> 06:00 interdit la nuit).
- * - `from === to` est refuse : on ne saurait pas dire si c'est « toute la
- *   journee » ou « jamais ».
- * - `enabled: false` conserve les heures saisies sans rien restreindre.
+ * - `from === to` est refuse quand la restriction est active : on ne saurait
+ *   pas dire si c'est « toute la journee » ou « jamais ».
+ * - `enabled: false` conserve les heures saisies sans rien restreindre (et
+ *   accepte donc `from === to`, qui ne restreint rien).
  *
  * Le direct n'est pas concerne : le serveur de diffusion ne choisit pas ce qui
  * passe pendant un live.
@@ -267,7 +299,7 @@ export const ExplicitRestriction = z
 		from: WallClockTime,
 		to: WallClockTime,
 	})
-	.refine((r) => r.from !== r.to, {
+	.refine((r) => !r.enabled || r.from !== r.to, {
 		message: "Le debut et la fin de la plage doivent etre differents",
 		path: ["to"],
 	});
@@ -307,12 +339,12 @@ export function isRecurringTiming(
 	return "repeat_every_weeks" in timing;
 }
 
-/** "PT2H30M" / "P1DT2H" -> millisecondes. Ignore annees/mois (ambigus). */
+/**
+ * "PT2H30M" / "P1DT2H" -> millisecondes. Ce que `ScheduleDuration` refuse
+ * (annees, mois, virgule decimale...) vaut 0.
+ */
 export function parseIsoDurationMs(iso: string): number {
-	const m =
-		/^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(
-			(iso ?? "").trim(),
-		);
+	const m = SCHEDULE_DURATION_RE.exec((iso ?? "").trim());
 	if (!m) return 0;
 	const [, w, d, h, min, s] = m;
 	return (
@@ -411,6 +443,15 @@ export type EventOccurrence = {
  * Les heures de `days` sont lues dans `timezone` (voir `ScheduleEvent`). C'est la
  * reference partagee par le backend et le front ; awoo-queen applique les memes
  * regles en Rust (`api/schedule.rs`).
+ *
+ * `first_occurence` est une date d'ancrage : une occurrence est ecartee
+ * seulement si sa date murale (dans `timezone`) precede la date UTC
+ * (`YYYY-MM-DD`) de `first_occurence`. Un lundi 00:30 a Paris (dimanche 23:30
+ * UTC) ancre au lundi joue donc des la premiere semaine.
+ *
+ * Pour un evenement recurrent, `fromMs` doit etre fini, et `toMs` aussi sauf si
+ * `last_occurence` borne l'evenement (la boucle s'arrete alors a cette date) :
+ * sinon `RangeError`, plutot qu'une boucle sans fin.
  */
 export function expandEventOccurrences(
 	event: ScheduleEvent,
@@ -432,12 +473,25 @@ export function expandEventOccurrences(
 
 	const t = event.timing;
 	const firstMs = new Date(t.first_occurence).getTime();
-	const lastMs = t.last_occurence
+	const parsedLastMs = t.last_occurence
 		? new Date(t.last_occurence).getTime()
-		: Number.POSITIVE_INFINITY;
+		: Number.NaN;
+	const lastMs = Number.isNaN(parsedLastMs)
+		? Number.POSITIVE_INFINITY
+		: parsedLastMs;
 	if (Number.isNaN(firstMs)) return [];
+	if (Number.isNaN(fromMs) || Number.isNaN(toMs)) return [];
+	// Aucune occurrence ne demarre apres `last_occurence` : borne la boucle.
+	const untilMs = Math.min(toMs, lastMs);
+	if (!Number.isFinite(fromMs) || !Number.isFinite(untilMs)) {
+		throw new RangeError(
+			"expandEventOccurrences : fenetre non bornee pour un evenement recurrent",
+		);
+	}
 	const period = Math.max(1, t.repeat_every_weeks);
-	const firstMonday = mondayEpochDay(epochDay(firstMs));
+	// Date d'ancrage : la date UTC de `first_occurence`, comparee aux dates murales.
+	const firstDay = epochDay(firstMs);
+	const firstMonday = mondayEpochDay(firstDay);
 	const occurences = t.days.map((occ) => {
 		const { isoDay, time } = parseDayOccurence(occ);
 		const [h, m, s] = time.split(":").map(Number);
@@ -447,17 +501,21 @@ export function expandEventOccurrences(
 		};
 	});
 
-	// Jours muraux a parcourir : la marge de deux jours couvre le decalage du
-	// fuseau (au plus +/-14 h) et un creneau commence la veille de `fromMs`.
+	// Jours muraux a parcourir : on part de `fromMs - duree` pour garder une
+	// occurrence longue commencee avant `fromMs` et encore en cours ; la marge de
+	// deux jours couvre le decalage du fuseau (au plus +/-14 h).
 	const out: EventOccurrence[] = [];
-	for (let day = epochDay(fromMs) - 2; day <= epochDay(toMs) + 2; day++) {
+	const startDay = Math.max(epochDay(fromMs - durationMs) - 2, firstDay);
+	const endDay = epochDay(untilMs) + 2;
+	for (let day = startDay; day <= endDay; day++) {
 		const weeksSince = (mondayEpochDay(day) - firstMonday) / 7;
 		if (weeksSince < 0 || weeksSince % period !== 0) continue;
 		const isoWeekday = isoWeekdayFromEpochDay(day);
 		for (const occ of occurences) {
 			if (occ.isoDay !== isoWeekday) continue;
 			const startAt = zonedWallTimeToUtcMs(day * DAY_MS + occ.timeMs, timezone);
-			if (startAt < firstMs || startAt > lastMs) continue;
+			// `day` est la date murale : avant la date d'ancrage, rien ne joue.
+			if (day < firstDay || startAt > lastMs) continue;
 			const endAt = startAt + durationMs;
 			if (endAt > fromMs && startAt < toMs) {
 				out.push({ event, source: "recurring", startAt, endAt });

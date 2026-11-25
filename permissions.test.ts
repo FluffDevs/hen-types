@@ -147,6 +147,20 @@ describe("hasPermission", () => {
 		expect(hasPermission(["Streamers"], "branding:read")).toBe(true);
 		expect(hasPermission(["Streamers"], "branding:update")).toBe(false);
 		expect(hasPermission(["AccesAuxStatus"], "monitoring:update")).toBe(false);
+		// /api/streaming/awoo-control (skip) etait ouvert a ProgrammeursRadio.
+		expect(hasPermission(["ProgrammeursRadio"], "monitoring:read")).toBe(true);
+		expect(hasPermission(["ProgrammeursRadio"], "monitoring:update")).toBe(
+			true,
+		);
+	});
+
+	it("tout ancien groupe du staff ouvre l'Accueil, comme avant la refonte", () => {
+		for (const legacy of LEGACY_GROUPS) {
+			expect(hasPermission([legacy], "dashboard:read")).toBe(true);
+			if (legacy === "admins") continue;
+			expect(LEGACY_GROUP_MIGRATION[legacy]).toContain("dashboard:read");
+			expect(legacyMigrationPlan([legacy]).add).toContain("dashboard:read");
+		}
 	});
 
 	it("n'applique plus les alias quand la transition est terminee", () => {
@@ -176,11 +190,25 @@ describe("hasPermission", () => {
 describe("migration legacy", () => {
 	it("correspondances validees", () => {
 		expect(LEGACY_GROUP_MIGRATION.admins).toEqual([ADMIN_ALL]);
-		expect(LEGACY_GROUP_MIGRATION.AccesMediatheque).toEqual(
-			MEDIA_CATEGORIES.map((c) => `library:read:${c}`),
-		);
-		expect(LEGACY_GROUP_MIGRATION.ProgrammeursRadio).toHaveLength(8);
+		expect(LEGACY_GROUP_MIGRATION.AccesMediatheque).toEqual([
+			"dashboard:read",
+			...MEDIA_CATEGORIES.map((c) => `library:read:${c}`),
+		]);
+		expect(LEGACY_GROUP_MIGRATION.ProgrammeursRadio).toEqual([
+			"dashboard:read",
+			"schedule:read",
+			"schedule:create",
+			"schedule:update",
+			"schedule:delete",
+			"branding:read",
+			"branding:create",
+			"branding:update",
+			"branding:delete",
+			"monitoring:read",
+			"monitoring:update",
+		]);
 		expect(LEGACY_GROUP_MIGRATION.Streamers).toEqual([
+			"dashboard:read",
 			"my-live:read",
 			"my-live:update",
 			"branding:read",
@@ -203,7 +231,6 @@ describe("migration legacy", () => {
 		);
 		for (const p of [
 			"play-history:read",
-			"monitoring:update",
 			"live-stats:read",
 			"audio-console:read",
 			"music-validation:read",
@@ -231,6 +258,15 @@ describe("migration legacy", () => {
 			"team:streamer",
 		]);
 		expect(plan.alreadyPresent).toEqual(["branding:read"]);
+	});
+
+	it("plan : dashboard:read une seule fois, et pas s'il est deja la", () => {
+		const plan = legacyMigrationPlan(["ProgrammeursRadio", "UploaderRadio"]);
+		expect(plan.add.filter((g) => g === "dashboard:read")).toHaveLength(1);
+		expect(plan.add).toContain("monitoring:update");
+		const again = legacyMigrationPlan(["AccesAuxStatus", "dashboard:read"]);
+		expect(again.add).toEqual(["monitoring:read"]);
+		expect(again.alreadyPresent).toEqual(["dashboard:read"]);
 	});
 
 	it("plan vide sans ancien groupe", () => {
