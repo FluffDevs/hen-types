@@ -108,6 +108,10 @@ Stocké dans une **annotation S3** (extension non standard, jusqu'à 1 Mo, JSON 
 | `cue_in` | `number?` (coercé) | Point de départ de lecture (secondes) |
 | `cue_out` | `number?` (coercé) | Point de fin de lecture (secondes) |
 | `sacem_registry` | `string?` | Référence SACEM |
+| `lufs` | `number?` (-70 à 10 ; silence → -70 ; invalide → absent) | Volume perçu intégré du fichier (LUFS, ITU-R BS.1770-4 / EBU R128). **Mesuré par le backend** à l'upload (et rattrapé pour l'existant), jamais saisi à la main |
+| `true_peak` | `number?` (-100 à 30 ; silence → -100 ; invalide → absent) | Crête vraie du fichier (dBTP, suréchantillonnage x4). Mesurée avec `lufs` |
+
+`lufs` et `true_peak` utilisent `.catch(undefined)` : une valeur cassée fait perdre la mesure, jamais la fiche entière (une fiche que Zod refuse disparaît des pages de listing). Un fichier **silencieux est mesuré** : il est enregistré au plancher (`LUFS_SILENCE_FLOOR` = -70, `TRUE_PEAK_FLOOR` = -100) et `-Infinity`, `null` (ce que devient `-Infinity` en JSON) ou une valeur sous le plancher sont relus comme le plancher, jamais comme « non mesuré » ; `isSilentLoudness(lufs)` le teste. Awoo-Queen s'en sert pour calculer le gain par titre envoyé à Liquidsoap ; absentes, le titre est diffusé sans correction, comme avant.
 
 ### `Music`
 
@@ -182,16 +186,23 @@ Cette table est verrouillée par un test dédié (voir §9).
 
 ### `ScheduleEvent`
 
-> **Toutes les dates/heures du document sont interprétées en UTC** par le serveur ; c'est au front/client de convertir vers/depuis UTC.
+> **Fuseau du planning.** Les heures de `days` (événements récurrents) sont des heures « murales » dans le fuseau du planning (`FullSchedule.timezone`, `Europe/Paris` par défaut) : `"SUNDAY:18:00:00"` joue à 18:00 à Paris toute l'année, heure d'été comprise. `date` (ponctuel) et `last_occurence` restent des **instants UTC**. `first_occurence` est une **date d'ancrage** : seule sa date UTC (`YYYY-MM-DD`) compte ; elle fixe la semaine du cycle, et une occurrence n'est écartée que si sa **date murale** (dans le fuseau du planning) est antérieure à cette date (un lundi 00:30 à Paris ancré au lundi joue dès la première semaine). `expandEventOccurrences` refuse (`RangeError`) une fenêtre non bornée, sauf si `last_occurence` la borne. Heure sautée au passage à l'heure d'été (02:30) → décalée d'autant (03:30) ; heure doublée au passage à l'heure d'hiver → la première. `expandEventOccurrences` est l'implémentation de référence, utilisée par le backend et le front ; awoo-queen applique les mêmes règles en Rust.
 
 - `timing` : union de deux formes —
   - récurrent : `{first_occurence, last_occurence?, repeat_every_weeks: number.int().min(1), days: DayOccurence[].min(1)}` ;
   - ponctuel : `{date}`.
-- `event_id`, `enabled` (défaut true), `title`, `description` (défaut ""), `slot_type`, `duration` (durée ISO 8601, ex. `PT1H`), `priority` (0-100, défaut 1), `content`, `created_by/at`, `updated_by/at`.
+- `event_id`, `enabled` (défaut true), `title`, `description` (défaut ""), `slot_type`, `duration` (`ScheduleDuration` : durée ISO 8601 en semaines, jours, heures, minutes, secondes, ex. `PT1H` ; années, mois, virgule décimale et fractions hors secondes refusés), `priority` (0-100, défaut 1), `content`, `created_by/at`, `updated_by/at`.
 
 ### `FullSchedule` / `ScheduleWithMetadata`
 
-- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?}` — le document éditable (ce qu'on envoie en `PUT`).
+- `FullSchedule = {events: ScheduleEvent[], default_playlist_id?, timezone, explicit_restriction?}` — le document éditable (ce qu'on envoie en `PUT`). `timezone` est un nom de fuseau IANA **canonique** (`isValidTimeZone` : le runtime doit le rendre à l'identique ; décalages `+01:00` et casse non canonique refusés, `UTC` accepté), `Europe/Paris` par défaut (les anciens documents sans ce champ sont donc lus en heure de Paris, qui est l'heure dans laquelle ils ont été saisis).
+- `explicit_restriction?: {enabled, from: "HH:MM", to: "HH:MM"}` (`ExplicitRestriction`) — plage quotidienne pendant laquelle les titres marqués `explicit` (`MusicMetadata.explicit`) ne doivent pas être diffusés. Absente = aucune restriction (comportement historique). Règles :
+  - `from` / `to` sont des heures **murales** dans `timezone` (06:00 reste 06:00 à Paris, heure d'été comprise) ;
+  - plage semi-ouverte `[from, to)` : 22:00 pile est autorisé quand `to = "22:00"` ;
+  - `from > to` traverse minuit (`22:00 → 06:00`) ; `from === to` est refusé quand `enabled` est vrai (accepté désactivé : rien n'est restreint) ;
+  - `enabled` vaut `false` par défaut : les heures restent saisies mais rien n'est restreint ;
+  - le direct (`live`) n'est pas concerné.
+- Helpers : `isExplicitAllowedAt(schedule, instantMs)` (un titre explicite peut-il démarrer à cet instant ?), `isInRestrictedWindow(restriction, minute)`, `wallMinuteOfDay(instantMs, tz)`. Ce sont les références ; awoo-queen applique la même règle en Rust et refuse en plus un titre explicite qui **déborderait** sur la plage quand il connaît sa durée.
 - `ScheduleWithMetadata = FullSchedule.extend({version, updated_by, updated_at})` — ajoute le verrouillage optimiste et les champs d'audit ; c'est ce que renvoie `GET`.
 
 ### `ResolvedSlot`
@@ -281,6 +292,33 @@ Aucune fonction client dans ce fichier.
 
 ---
 
+## 8 bis. `permissions.ts` — catalogue des droits (groupes Cognito)
+
+Source unique des droits du panel, utilisée par le backend (contrôle sur chaque route) et le front (menu, boutons, page « Gestion des droits »). Module pur : aucun appel réseau.
+
+- **Format** : un groupe Cognito = un droit `page:action`, ou `page:action:categorie` pour `library` et `uploads` (catégories = `MediaCategory`). Ex. `uploads:create:musics`.
+- **Indépendance** : aucun droit n'en implique un autre (même la lecture se donne explicitement). Seul `ADMIN_ALL` (`"admin:all"`) donne tout, y compris les pages futures.
+- **`TEAM_GROUPS`** (`team:radiovolunteer`, `team:associate`, `team:streamer`) : appartenance seulement, aucun droit.
+- **`EXTERNAL_GROUPS`** (`gestionconvsfur`) et tout groupe inconnu : « non géré », jamais modifié par le panel.
+- **`LEGACY_GROUP_MIGRATION`** : correspondances anciens → nouveaux groupes. Sert d'**alias** pendant la transition (option `legacyAliases`, vraie par défaut) et de **plan de migration** (`legacyMigrationPlan`). Chaque ancien groupe (sauf `admins`, couvert par `admin:all`) donne `dashboard:read`, l'Accueil étant ouvert à tous avant la refonte ; `ProgrammeursRadio` donne aussi `monitoring:read` et `monitoring:update` (le skip awoo-queen lui était ouvert).
+
+| Fonction | Rôle |
+|---|---|
+| `hasPermission(groups, perm, opts?)` | vrai si `admin:all` ou le droit exact (alias appliqués) |
+| `hasAnyPermission(groups, perms, opts?)` | au moins un des droits |
+| `isAdmin(groups, opts?)` | `admin:all` (ou `admins` pendant la transition) |
+| `permissionsOf(groups, opts?)` | droits effectifs (admin développé en tout le catalogue) |
+| `effectiveGroups(groups, opts?)` | groupes du jeton + groupes donnés par les alias |
+| `allPermissions()` / `allCatalogGroups()` | catalogue (sans / avec `admin:all` et `team:*`) |
+| `classifyGroup(name)` | `admin` / `permission` / `team` / `legacy` / `external` / `unknown` |
+| `parsePermission`, `permissionLabel`, `catalogGroupDescription` | analyse et libellés FR |
+| `legacyMigrationPlan(userGroups)` | `{ legacy, add, alreadyPresent }` pour un utilisateur |
+| `mediaPermissions(access, cat)`, `canAccessMedia`, `mediaCategoriesFor` | droits qui ouvrent une route média (`list`, `download`, `create`, `update`, `delete`) |
+
+Routes média : une même route sert plusieurs pages, d'où plusieurs droits possibles (un seul suffit). `list` (liste, métadonnées) : `library:read:<cat>`, `uploads:read:<cat>`, `schedule:read`, plus `playlists:read` et `music-validation:read` pour `musics`, `branding:read` pour `jingles`. `download` : idem sans `schedule:read` ni `playlists:read`. Écritures : `uploads:<action>:<cat>`, plus `branding:<action>` pour `jingles` et `music-validation:update` pour la mise à jour des `musics`.
+
+Ajouter une page : une entrée dans `PERMISSION_PAGES` **et** dans le type `Permission`, un test dans `permissions.test.ts`, puis « Synchroniser le catalogue » dans le panel (création idempotente des groupes Cognito).
+
 ## 9. Garanties testées
 
 Seul fichier de test du module : `schedule.test.ts` (vitest). Deux suites :
@@ -298,6 +336,13 @@ Seul fichier de test du module : `schedule.test.ts` (vitest). Deux suites :
 - `MediaCategory.options` contient `"vod"`.
 - `SlotType.options` contient `"vod"`, et `SLOT_TYPES.vod` est **exactement** `{label: "VOD / Rediffusion", content_kind: "media", category: "vod", default_priority: 50}` — verrouille cette ligne de table contre toute dérive accidentelle.
 - Un contenu `media` avec une piste de catégorie `vod` se parse correctement.
+
+**« restriction des titres explicites »**
+- Absente par défaut ; sans elle, `isExplicitAllowedAt` répond toujours `true`.
+- Format `HH:MM` strict (`6:00`, `24:00`, `22:60`, `06:00:00` refusés) ; `from === to` refusé si `enabled`, accepté sinon ; `enabled` vaut `false` par défaut.
+- Plage lue en heure de Paris en hiver (UTC+1) comme en été (UTC+2) ; borne de fin exclue.
+- Nuits de changement d'heure : heure sautée et heure doublée traitées sur l'horloge murale.
+- Plage à cheval sur minuit (`22:00 → 06:00`).
 
 Aucun fichier de test n'existe pour `music.ts`, `playlist.ts`, `animator.ts`, `genres.ts` ou `languages.ts` **dans le module lui-même** — certains comportements (labels de catégorie, etc.) sont testés côté application consommatrice (ex. `admin-panel-front/src/lib/mediaCategoryLabels.test.ts`).
 
